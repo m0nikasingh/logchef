@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/mr-karan/logchef/internal/sqlite/sqlc"
+	"github.com/mr-karan/logchef/internal/store/sqlite/sqlc"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 

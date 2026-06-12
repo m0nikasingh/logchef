@@ -4,13 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mr-karan/logchef/internal/sqlite"
+	"github.com/mr-karan/logchef/internal/store"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
 // seedTeamWithMember creates a team and adds the given user with the given role,
 // returning the team id. Fails the test on any error so call sites stay flat.
-func seedTeamWithMember(t *testing.T, db *sqlite.DB, teamName, ownerEmail string, role models.TeamRole) (models.TeamID, models.UserID) {
+func seedTeamWithMember(t *testing.T, db store.Store, teamName, ownerEmail string, role models.TeamRole) (models.TeamID, models.UserID) {
 	t.Helper()
 	log := discardLogger()
 	user := newTestUser(t, db, ownerEmail, ownerEmail)

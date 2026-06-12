@@ -9,7 +9,7 @@ import (
 
 	"github.com/mr-karan/logchef/internal/config"
 	"github.com/mr-karan/logchef/internal/core"
-	"github.com/mr-karan/logchef/internal/sqlite"
+	"github.com/mr-karan/logchef/internal/store"
 	"github.com/mr-karan/logchef/pkg/models"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -151,7 +151,7 @@ func (p *OIDCProvider) GetIssuer() string {
 // HandleCallback processes the OIDC callback, exchanges the code for tokens,
 // verifies the ID token, looks up or potentially creates the user in the local database,
 // and creates a local application session.
-func (p *OIDCProvider) HandleCallback(ctx context.Context, db *sqlite.DB, log *slog.Logger, authCfg *config.AuthConfig, code, state string) (*models.User, *models.Session, error) {
+func (p *OIDCProvider) HandleCallback(ctx context.Context, db store.Store, log *slog.Logger, authCfg *config.AuthConfig, code, state string) (*models.User, *models.Session, error) {
 	// Exchange authorization code for OAuth2 tokens.
 	oauth2Token, err := p.oauthConf.Exchange(ctx, code)
 	if err != nil {

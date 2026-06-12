@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mr-karan/logchef/internal/sqlite/sqlc"
+	"github.com/mr-karan/logchef/internal/store/sqlite/sqlc"
 )
 
 // GetSetting retrieves a setting value from the database.

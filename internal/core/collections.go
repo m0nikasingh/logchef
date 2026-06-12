@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/mr-karan/logchef/internal/sqlite"
+	"github.com/mr-karan/logchef/internal/store"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
@@ -41,7 +41,7 @@ const personalCollectionName = "My Collection"
 //     concurrent creator (the unique partial index on
 //     `collections(created_by) WHERE is_personal=1` enforces one-per-user),
 //     we re-fetch and return the row the winner wrote.
-func EnsurePersonalCollection(ctx context.Context, db *sqlite.DB, log *slog.Logger, user *models.User) (*models.Collection, error) {
+func EnsurePersonalCollection(ctx context.Context, db store.Store, log *slog.Logger, user *models.User) (*models.Collection, error) {
 	if user == nil {
 		return nil, fmt.Errorf("user is required to ensure personal collection")
 	}
@@ -58,7 +58,7 @@ func EnsurePersonalCollection(ctx context.Context, db *sqlite.DB, log *slog.Logg
 		// Race: another goroutine wrote the row between our GetPersonalCollection
 		// check and our INSERT. The unique partial index turns the second insert
 		// into a unique-constraint failure; recover by reading the winner's row.
-		if sqlite.IsUniqueConstraintError(err) {
+		if store.IsUniqueConstraintError(err) {
 			personal, getErr := db.GetPersonalCollection(ctx, user.ID)
 			if getErr == nil {
 				return personal, nil
@@ -79,7 +79,7 @@ func EnsurePersonalCollection(ctx context.Context, db *sqlite.DB, log *slog.Logg
 }
 
 // ListCollectionsForUser returns the user's collections (auto-creating personal).
-func ListCollectionsForUser(ctx context.Context, db *sqlite.DB, log *slog.Logger, user *models.User) ([]*models.Collection, error) {
+func ListCollectionsForUser(ctx context.Context, db store.Store, log *slog.Logger, user *models.User) ([]*models.Collection, error) {
 	if _, err := EnsurePersonalCollection(ctx, db, log, user); err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func ListCollectionsForUser(ctx context.Context, db *sqlite.DB, log *slog.Logger
 }
 
 // CreateCollection creates a shared collection owned by the caller.
-func CreateCollection(ctx context.Context, db *sqlite.DB, log *slog.Logger, name, description string, createdBy models.UserID) (*models.Collection, error) {
+func CreateCollection(ctx context.Context, db store.Store, log *slog.Logger, name, description string, createdBy models.UserID) (*models.Collection, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("name is required")
@@ -114,10 +114,10 @@ func CreateCollection(ctx context.Context, db *sqlite.DB, log *slog.Logger, name
 // Returns ErrCollectionNotFound when the user has no membership row. Admins
 // do not get a free pass — they must be a collection member like everyone
 // else (matches the team-membership model for sources).
-func GetCollectionForUser(ctx context.Context, db *sqlite.DB, log *slog.Logger, collectionID int, userID models.UserID) (*models.Collection, models.CollectionRole, error) {
+func GetCollectionForUser(ctx context.Context, db store.Store, log *slog.Logger, collectionID int, userID models.UserID) (*models.Collection, models.CollectionRole, error) {
 	collection, err := db.GetCollection(ctx, collectionID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || sqlite.IsNotFoundError(err) {
+		if errors.Is(err, sql.ErrNoRows) || store.IsNotFoundError(err) {
 			return nil, "", ErrCollectionNotFound
 		}
 		log.Error("failed to load collection", "error", err, "collection_id", collectionID)
@@ -138,7 +138,7 @@ func GetCollectionForUser(ctx context.Context, db *sqlite.DB, log *slog.Logger, 
 }
 
 // UpdateCollection renames/redescribes a collection. Owner-only.
-func UpdateCollection(ctx context.Context, db *sqlite.DB, log *slog.Logger, collectionID int, userID models.UserID, name, description string) (*models.Collection, error) {
+func UpdateCollection(ctx context.Context, db store.Store, log *slog.Logger, collectionID int, userID models.UserID, name, description string) (*models.Collection, error) {
 	collection, role, err := GetCollectionForUser(ctx, db, log, collectionID, userID)
 	if err != nil {
 		return nil, err
@@ -165,7 +165,7 @@ func UpdateCollection(ctx context.Context, db *sqlite.DB, log *slog.Logger, coll
 }
 
 // DeleteCollection removes a collection. Owner-only; personal collections are protected.
-func DeleteCollection(ctx context.Context, db *sqlite.DB, log *slog.Logger, collectionID int, userID models.UserID) error {
+func DeleteCollection(ctx context.Context, db store.Store, log *slog.Logger, collectionID int, userID models.UserID) error {
 	collection, role, err := GetCollectionForUser(ctx, db, log, collectionID, userID)
 	if err != nil {
 		return err
@@ -184,7 +184,7 @@ func DeleteCollection(ctx context.Context, db *sqlite.DB, log *slog.Logger, coll
 }
 
 // AddCollectionMember invites a user. Owner-only.
-func AddCollectionMember(ctx context.Context, db *sqlite.DB, log *slog.Logger, collectionID int, callerID models.UserID, targetUserID models.UserID, role models.CollectionRole) error {
+func AddCollectionMember(ctx context.Context, db store.Store, log *slog.Logger, collectionID int, callerID models.UserID, targetUserID models.UserID, role models.CollectionRole) error {
 	if role != models.CollectionRoleOwner && role != models.CollectionRoleMember {
 		return ErrInvalidCollectionRole
 	}
@@ -207,7 +207,7 @@ func AddCollectionMember(ctx context.Context, db *sqlite.DB, log *slog.Logger, c
 
 // RemoveCollectionMember drops a member. Owners can remove anyone (except the
 // last owner); members can self-leave.
-func RemoveCollectionMember(ctx context.Context, db *sqlite.DB, log *slog.Logger, collectionID int, callerID models.UserID, targetUserID models.UserID) error {
+func RemoveCollectionMember(ctx context.Context, db store.Store, log *slog.Logger, collectionID int, callerID models.UserID, targetUserID models.UserID) error {
 	collection, callerRole, err := GetCollectionForUser(ctx, db, log, collectionID, callerID)
 	if err != nil {
 		return err
@@ -246,7 +246,7 @@ func RemoveCollectionMember(ctx context.Context, db *sqlite.DB, log *slog.Logger
 }
 
 // ListCollectionMembers returns members visible to anyone in the collection.
-func ListCollectionMembers(ctx context.Context, db *sqlite.DB, log *slog.Logger, collectionID int, callerID models.UserID) ([]*models.CollectionMember, error) {
+func ListCollectionMembers(ctx context.Context, db store.Store, log *slog.Logger, collectionID int, callerID models.UserID) ([]*models.CollectionMember, error) {
 	if _, _, err := GetCollectionForUser(ctx, db, log, collectionID, callerID); err != nil {
 		return nil, err
 	}
@@ -256,7 +256,7 @@ func ListCollectionMembers(ctx context.Context, db *sqlite.DB, log *slog.Logger,
 // AddCollectionItem references a saved query in a collection. Owner-only.
 // The caller must also have visibility to the saved query (source access via
 // any team) so they can't pin queries that they themselves can't see.
-func AddCollectionItem(ctx context.Context, db *sqlite.DB, log *slog.Logger, collectionID int, callerID models.UserID, savedQueryID, sortOrder int) error {
+func AddCollectionItem(ctx context.Context, db store.Store, log *slog.Logger, collectionID int, callerID models.UserID, savedQueryID, sortOrder int) error {
 	_, callerRole, err := GetCollectionForUser(ctx, db, log, collectionID, callerID)
 	if err != nil {
 		return err
@@ -267,7 +267,7 @@ func AddCollectionItem(ctx context.Context, db *sqlite.DB, log *slog.Logger, col
 
 	query, err := db.GetSavedQuery(ctx, savedQueryID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || sqlite.IsNotFoundError(err) {
+		if errors.Is(err, sql.ErrNoRows) || store.IsNotFoundError(err) {
 			return ErrQueryNotFound
 		}
 		return err
@@ -284,7 +284,7 @@ func AddCollectionItem(ctx context.Context, db *sqlite.DB, log *slog.Logger, col
 }
 
 // RemoveCollectionItem unlinks a saved query. Owner-only.
-func RemoveCollectionItem(ctx context.Context, db *sqlite.DB, log *slog.Logger, collectionID int, callerID models.UserID, savedQueryID int) error {
+func RemoveCollectionItem(ctx context.Context, db store.Store, log *slog.Logger, collectionID int, callerID models.UserID, savedQueryID int) error {
 	_, callerRole, err := GetCollectionForUser(ctx, db, log, collectionID, callerID)
 	if err != nil {
 		return err
@@ -296,7 +296,7 @@ func RemoveCollectionItem(ctx context.Context, db *sqlite.DB, log *slog.Logger, 
 }
 
 // ListCollectionItems returns items with the runnable flag computed for the caller.
-func ListCollectionItems(ctx context.Context, db *sqlite.DB, log *slog.Logger, collectionID int, callerID models.UserID) ([]*models.CollectionItem, error) {
+func ListCollectionItems(ctx context.Context, db store.Store, log *slog.Logger, collectionID int, callerID models.UserID) ([]*models.CollectionItem, error) {
 	if _, _, err := GetCollectionForUser(ctx, db, log, collectionID, callerID); err != nil {
 		return nil, err
 	}

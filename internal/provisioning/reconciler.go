@@ -9,15 +9,16 @@ import (
 
 	"github.com/mr-karan/logchef/internal/clickhouse"
 	"github.com/mr-karan/logchef/internal/config"
-	"github.com/mr-karan/logchef/internal/sqlite"
-	"github.com/mr-karan/logchef/internal/sqlite/sqlc"
+	"github.com/mr-karan/logchef/internal/store"
+	"github.com/mr-karan/logchef/internal/store/sqlite"
+	"github.com/mr-karan/logchef/internal/store/sqlite/sqlc"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
 // Reconcile applies the provisioning config to the database.
 // It runs in a single SQLite write transaction. On dry_run, the transaction is rolled back.
 // adminEmails is used to determine global admin role precedence.
-func Reconcile(ctx context.Context, cfg *config.ProvisioningConfig, db *sqlite.DB, chMgr *clickhouse.Manager, log *slog.Logger, adminEmails []string) error {
+func Reconcile(ctx context.Context, cfg *config.ProvisioningConfig, db store.Store, chMgr *clickhouse.Manager, log *slog.Logger, adminEmails []string) error {
 	if !cfg.Enabled() {
 		return nil
 	}
@@ -43,7 +44,8 @@ func Reconcile(ctx context.Context, cfg *config.ProvisioningConfig, db *sqlite.D
 	}
 	defer tx.Rollback()
 
-	qtx := db.WriteQueriesWithTx(tx)
+	// TODO(phase3): remove downcast once WriteQueriesWithTx is part of the Store interface or refactored away.
+	qtx := db.(*sqlite.DB).WriteQueriesWithTx(tx)
 
 	// Track sources created/updated for post-commit ClickHouse connection setup
 	var sourcesToConnect []models.Source

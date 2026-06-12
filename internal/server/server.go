@@ -12,7 +12,7 @@ import (
 	"github.com/mr-karan/logchef/internal/clickhouse"
 	"github.com/mr-karan/logchef/internal/config"
 	"github.com/mr-karan/logchef/internal/metrics"
-	"github.com/mr-karan/logchef/internal/sqlite"
+	"github.com/mr-karan/logchef/internal/store"
 	"github.com/mr-karan/logchef/pkg/models"
 
 	"github.com/gofiber/fiber/v2"
@@ -28,7 +28,7 @@ import (
 // This structure reflects the refactored approach using direct dependencies instead of services.
 type ServerOptions struct {
 	Config        *config.Config
-	SQLite        *sqlite.DB
+	SQLite        store.Store
 	ClickHouse    *clickhouse.Manager
 	AlertsManager *alerts.Manager    // Alerts manager for manual resolution and notifications.
 	OIDCProvider  *auth.OIDCProvider // OIDC provider for authentication flows.
@@ -43,7 +43,7 @@ type ServerOptions struct {
 type Server struct {
 	app           *fiber.App
 	config        *config.Config
-	sqlite        *sqlite.DB
+	sqlite        store.Store
 	clickhouse    *clickhouse.Manager
 	alertsManager *alerts.Manager    // Alerts manager for manual resolution and notifications.
 	oidcProvider  *auth.OIDCProvider // Handles OIDC authentication logic.

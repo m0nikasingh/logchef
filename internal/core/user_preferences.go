@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mr-karan/logchef/internal/sqlite"
+	"github.com/mr-karan/logchef/internal/store"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
@@ -21,10 +21,10 @@ var DefaultUserPreferences = models.UserPreferences{
 
 // GetUserPreferences returns stored preferences for a user.
 // If none are stored, defaults are returned with isDefault=true.
-func GetUserPreferences(ctx context.Context, db *sqlite.DB, userID models.UserID) (models.UserPreferences, bool, error) {
+func GetUserPreferences(ctx context.Context, db store.Store, userID models.UserID) (models.UserPreferences, bool, error) {
 	prefsJSON, err := db.GetUserPreferencesJSON(ctx, userID)
 	if err != nil {
-		if errors.Is(err, sqlite.ErrNotFound) {
+		if errors.Is(err, store.ErrNotFound) {
 			return DefaultUserPreferences, true, nil
 		}
 		return DefaultUserPreferences, false, fmt.Errorf("failed to load user preferences: %w", err)
@@ -44,7 +44,7 @@ func GetUserPreferences(ctx context.Context, db *sqlite.DB, userID models.UserID
 }
 
 // UpdateUserPreferences applies updates and persists user preferences.
-func UpdateUserPreferences(ctx context.Context, db *sqlite.DB, userID models.UserID, update models.UpdateUserPreferencesRequest) (models.UserPreferences, error) {
+func UpdateUserPreferences(ctx context.Context, db store.Store, userID models.UserID, update models.UpdateUserPreferencesRequest) (models.UserPreferences, error) {
 	if err := validateUserPreferencesUpdate(update); err != nil {
 		return DefaultUserPreferences, err
 	}

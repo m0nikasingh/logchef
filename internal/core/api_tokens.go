@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/mr-karan/logchef/internal/config"
-	"github.com/mr-karan/logchef/internal/sqlite"
-	"github.com/mr-karan/logchef/internal/sqlite/sqlc"
+	"github.com/mr-karan/logchef/internal/store"
+	"github.com/mr-karan/logchef/internal/store/sqlite/sqlc"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
@@ -158,7 +158,7 @@ func unmarshalTokenScopes(raw string) []models.TokenScope {
 }
 
 // CreateAPIToken creates a new API token for a user
-func CreateAPIToken(ctx context.Context, db *sqlite.DB, log *slog.Logger, authCfg *config.AuthConfig, userID models.UserID, name string, expiresAt *time.Time, scopes []models.TokenScope) (*models.CreateAPITokenResponse, error) {
+func CreateAPIToken(ctx context.Context, db store.Store, log *slog.Logger, authCfg *config.AuthConfig, userID models.UserID, name string, expiresAt *time.Time, scopes []models.TokenScope) (*models.CreateAPITokenResponse, error) {
 	normalizedScopes, err := validateAPITokenCreation(name, scopes)
 	if err != nil {
 		return nil, err
@@ -227,7 +227,7 @@ func CreateAPIToken(ctx context.Context, db *sqlite.DB, log *slog.Logger, authCf
 }
 
 // GetAPIToken retrieves an API token by ID
-func GetAPIToken(ctx context.Context, db *sqlite.DB, tokenID int) (*models.APIToken, error) {
+func GetAPIToken(ctx context.Context, db store.Store, tokenID int) (*models.APIToken, error) {
 	sqlcToken, err := db.GetAPIToken(ctx, int64(tokenID))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -240,7 +240,7 @@ func GetAPIToken(ctx context.Context, db *sqlite.DB, tokenID int) (*models.APITo
 }
 
 // ListAPITokensForUser lists all API tokens for a specific user
-func ListAPITokensForUser(ctx context.Context, db *sqlite.DB, userID models.UserID) ([]*models.APIToken, error) {
+func ListAPITokensForUser(ctx context.Context, db store.Store, userID models.UserID) ([]*models.APIToken, error) {
 	sqlcTokens, err := db.ListAPITokensForUser(ctx, int64(userID))
 	if err != nil {
 		return nil, fmt.Errorf("error listing API tokens for user: %w", err)
@@ -255,7 +255,7 @@ func ListAPITokensForUser(ctx context.Context, db *sqlite.DB, userID models.User
 }
 
 // DeleteAPIToken deletes an API token by ID, ensuring the user owns it
-func DeleteAPIToken(ctx context.Context, db *sqlite.DB, log *slog.Logger, userID models.UserID, tokenID int) error {
+func DeleteAPIToken(ctx context.Context, db store.Store, log *slog.Logger, userID models.UserID, tokenID int) error {
 	// Verify the token exists and belongs to the user
 	token, err := GetAPIToken(ctx, db, tokenID)
 	if err != nil {
@@ -280,7 +280,7 @@ func DeleteAPIToken(ctx context.Context, db *sqlite.DB, log *slog.Logger, userID
 }
 
 // AuthenticateAPIToken authenticates a token and returns the associated user
-func AuthenticateAPIToken(ctx context.Context, db *sqlite.DB, log *slog.Logger, authCfg *config.AuthConfig, token string) (*models.User, *models.APIToken, error) {
+func AuthenticateAPIToken(ctx context.Context, db store.Store, log *slog.Logger, authCfg *config.AuthConfig, token string) (*models.User, *models.APIToken, error) {
 	// Validate basic token format
 	if !hasTokenPrefix(token) {
 		return nil, nil, ErrInvalidToken
@@ -326,12 +326,12 @@ func AuthenticateAPIToken(ctx context.Context, db *sqlite.DB, log *slog.Logger, 
 }
 
 // UpdateAPITokenLastUsed updates the last used timestamp for an API token
-func UpdateAPITokenLastUsed(ctx context.Context, db *sqlite.DB, tokenID int) error {
+func UpdateAPITokenLastUsed(ctx context.Context, db store.Store, tokenID int) error {
 	return db.UpdateAPITokenLastUsed(ctx, int64(tokenID))
 }
 
 // CleanupExpiredTokens removes all expired API tokens
-func CleanupExpiredTokens(ctx context.Context, db *sqlite.DB, log *slog.Logger) error {
+func CleanupExpiredTokens(ctx context.Context, db store.Store, log *slog.Logger) error {
 	if err := db.DeleteExpiredAPITokens(ctx); err != nil {
 		log.Error("failed to cleanup expired API tokens", "error", err)
 		return fmt.Errorf("failed to cleanup expired tokens: %w", err)

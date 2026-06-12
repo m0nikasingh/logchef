@@ -9,13 +9,14 @@ import (
 	"testing"
 
 	"github.com/mr-karan/logchef/internal/config"
-	"github.com/mr-karan/logchef/internal/sqlite"
+	"github.com/mr-karan/logchef/internal/store"
+	"github.com/mr-karan/logchef/internal/store/sqlite"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
 // newTestDB spins up a fresh on-disk SQLite DB with all migrations applied.
 // The file lives in t.TempDir() so go test cleans up automatically.
-func newTestDB(t *testing.T) *sqlite.DB {
+func newTestDB(t *testing.T) store.Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := sqlite.New(sqlite.Options{
@@ -34,7 +35,7 @@ func newTestDB(t *testing.T) *sqlite.DB {
 }
 
 // newTestUser creates a user row and returns the populated *models.User.
-func newTestUser(t *testing.T, db *sqlite.DB, email, fullName string) *models.User {
+func newTestUser(t *testing.T, db store.Store, email, fullName string) *models.User {
 	t.Helper()
 	user := &models.User{Email: email, FullName: fullName, Role: models.UserRoleMember, Status: "active"}
 	if err := db.CreateUser(context.Background(), user); err != nil {

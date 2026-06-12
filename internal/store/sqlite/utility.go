@@ -6,43 +6,24 @@ import (
 	"fmt"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3" // Import the SQLite driver
-
-	"github.com/mr-karan/logchef/internal/sqlite/sqlc"
+	"github.com/mr-karan/logchef/internal/store"
+	"github.com/mr-karan/logchef/internal/store/sqlite/sqlc"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
-// Define standard error types
+// Sentinels are re-exported from internal/store so that errors.Is works
+// regardless of which package callers reference.
 var (
-	// ErrNotFound is returned when a resource is not found
-	ErrNotFound = errors.New("resource not found")
-
-	// ErrUserNotFound is returned when a user is not found
-	ErrUserNotFound = fmt.Errorf("%w: user", ErrNotFound)
-
-	// ErrTeamNotFound is returned when a team is not found
-	ErrTeamNotFound = fmt.Errorf("%w: team", ErrNotFound)
-
-	// ErrSourceNotFound is returned when a source is not found
-	ErrSourceNotFound = fmt.Errorf("%w: source", ErrNotFound)
-
-	// ErrSessionNotFound is returned when a session is not found
-	ErrSessionNotFound = fmt.Errorf("%w: session", ErrNotFound)
-
-	// ErrQueryNotFound is returned when a query is not found
-	ErrQueryNotFound = fmt.Errorf("%w: query", ErrNotFound)
-
-	// ErrUniqueConstraint is returned when a unique constraint is violated
-	ErrUniqueConstraint = errors.New("unique constraint violation")
-
-	// ErrUserExists is returned when a user with the same email already exists
-	ErrUserExists = fmt.Errorf("%w: user with this email already exists", ErrUniqueConstraint)
-
-	// ErrTeamExists is returned when a team with the same name already exists
-	ErrTeamExists = fmt.Errorf("%w: team with this name already exists", ErrUniqueConstraint)
-
-	// ErrSourceExists is returned when a source with the same database/table already exists
-	ErrSourceExists = fmt.Errorf("%w: source with this database/table already exists", ErrUniqueConstraint)
+	ErrNotFound         = store.ErrNotFound
+	ErrUserNotFound     = store.ErrUserNotFound
+	ErrTeamNotFound     = store.ErrTeamNotFound
+	ErrSourceNotFound   = store.ErrSourceNotFound
+	ErrSessionNotFound  = store.ErrSessionNotFound
+	ErrQueryNotFound    = store.ErrQueryNotFound
+	ErrUniqueConstraint = store.ErrUniqueConstraint
+	ErrUserExists       = store.ErrUserExists
+	ErrTeamExists       = store.ErrTeamExists
+	ErrSourceExists     = store.ErrSourceExists
 )
 
 // IsNotFoundError checks if an error is any type of not found error

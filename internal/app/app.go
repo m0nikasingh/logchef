@@ -15,14 +15,15 @@ import (
 	"github.com/mr-karan/logchef/internal/core"
 	"github.com/mr-karan/logchef/internal/provisioning"
 	"github.com/mr-karan/logchef/internal/server"
-	"github.com/mr-karan/logchef/internal/sqlite"
+	"github.com/mr-karan/logchef/internal/store"
+	"github.com/mr-karan/logchef/internal/store/sqlite"
 	"github.com/mr-karan/logchef/pkg/logger"
 )
 
 // App represents the core application context, holding dependencies and configuration.
 type App struct {
 	Config     *config.Config
-	SQLite     *sqlite.DB
+	Store      store.Store
 	ClickHouse *clickhouse.Manager
 	Logger     *slog.Logger
 	server     *server.Server
@@ -68,13 +69,13 @@ func (a *App) Initialize(ctx context.Context) error {
 		Config: a.Config.SQLite,
 		Logger: a.Logger,
 	}
-	a.SQLite, err = sqlite.New(sqliteOpts)
+	a.Store, err = sqlite.New(sqliteOpts)
 	if err != nil {
 		return fmt.Errorf("failed to initialize sqlite: %w", err)
 	}
 
 	// Initialize admin users based on configuration.
-	if err := core.InitAdminUsers(ctx, a.SQLite, a.Logger, a.Config.Auth.AdminEmails); err != nil {
+	if err := core.InitAdminUsers(ctx, a.Store, a.Logger, a.Config.Auth.AdminEmails); err != nil {
 		a.Logger.Error("failed to initialize admin users", "error", err)
 		return fmt.Errorf("failed to initialize admin users: %w", err)
 	}
@@ -87,7 +88,7 @@ func (a *App) Initialize(ctx context.Context) error {
 
 	// Load runtime configuration: merge static config.toml with database settings.
 	// Database settings override config.toml for non-essential settings.
-	a.Config = config.LoadRuntimeConfig(ctx, a.Config, a.SQLite)
+	a.Config = config.LoadRuntimeConfig(ctx, a.Config, a.Store)
 	a.Logger.Info("runtime configuration loaded from database and config.toml")
 
 	// Initialize ClickHouse connection manager.
@@ -113,14 +114,14 @@ func (a *App) Initialize(ctx context.Context) error {
 			"prune", a.Config.Provisioning.Prune,
 			"dry_run", a.Config.Provisioning.DryRun,
 		)
-		if err := provisioning.Reconcile(ctx, &a.Config.Provisioning, a.SQLite, a.ClickHouse, a.Logger, a.Config.Auth.AdminEmails); err != nil {
+		if err := provisioning.Reconcile(ctx, &a.Config.Provisioning, a.Store, a.ClickHouse, a.Logger, a.Config.Auth.AdminEmails); err != nil {
 			return fmt.Errorf("provisioning reconciliation failed: %w", err)
 		}
 	}
 
 	// Load existing sources from SQLite into the ClickHouse manager
 	// to establish connections for querying.
-	sources, err := a.SQLite.ListSources(ctx)
+	sources, err := a.Store.ListSources(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list sources: %w", err)
 	}
@@ -142,13 +143,13 @@ func (a *App) Initialize(ctx context.Context) error {
 	a.ClickHouse.StartBackgroundHealthChecks(0)
 
 	// Initialize alerts manager with dynamic senders that read config from DB
-	emailSender := alerts.NewDynamicEmailSender(a.SQLite, a.Logger)
-	webhookSender := alerts.NewDynamicWebhookSender(a.SQLite, a.Logger)
+	emailSender := alerts.NewDynamicEmailSender(a.Store, a.Logger)
+	webhookSender := alerts.NewDynamicWebhookSender(a.Store, a.Logger)
 	alertSender := alerts.NewMultiSender(emailSender, webhookSender)
 
 	a.Alerts = alerts.NewManager(alerts.Options{
 		Config:     a.Config.Alerts,
-		DB:         a.SQLite,
+		DB:         a.Store,
 		ClickHouse: a.ClickHouse,
 		Logger:     a.Logger,
 		Sender:     alertSender,
@@ -157,7 +158,7 @@ func (a *App) Initialize(ctx context.Context) error {
 	// Initialize HTTP server with alerts manager for manual resolution.
 	serverOpts := server.ServerOptions{
 		Config:        a.Config,
-		SQLite:        a.SQLite,
+		SQLite:        a.Store,
 		ClickHouse:    a.ClickHouse,
 		AlertsManager: a.Alerts,
 		OIDCProvider:  oidcProvider,
@@ -253,10 +254,10 @@ func (a *App) Shutdown(ctx context.Context) error {
 	}
 
 	// Close database connections.
-	if a.SQLite != nil {
+	if a.Store != nil {
 		a.Logger.Info("closing SQLite connection")
 		// SQLite should close almost instantly, no need for a separate goroutine
-		if err := a.SQLite.Close(); err != nil {
+		if err := a.Store.Close(); err != nil {
 			a.Logger.Error("error closing SQLite", "error", err)
 		} else {
 			a.Logger.Info("SQLite connection closed successfully")
@@ -272,7 +273,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 // After seeding, database becomes the source of truth and config.toml can be simplified.
 func (a *App) seedSystemSettings(ctx context.Context) error {
 	// Check if settings already exist
-	settings, err := a.SQLite.ListSettings(ctx)
+	settings, err := a.Store.ListSettings(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check existing settings: %w", err)
 	}
@@ -385,7 +386,7 @@ func (a *App) seedSystemSettings(ctx context.Context) error {
 	}
 
 	for key, setting := range alertsSettings {
-		if err := a.SQLite.UpsertSetting(ctx, key, setting.value, setting.valueType, "alerts", setting.description, setting.isSensitive); err != nil {
+		if err := a.Store.UpsertSetting(ctx, key, setting.value, setting.valueType, "alerts", setting.description, setting.isSensitive); err != nil {
 			a.Logger.Warn("failed to seed alert setting", "key", key, "error", err)
 		} else {
 			a.Logger.Debug("seeded alert setting", "key", key, "value", setting.value)
@@ -438,7 +439,7 @@ func (a *App) seedSystemSettings(ctx context.Context) error {
 	}
 
 	for key, setting := range aiSettings {
-		if err := a.SQLite.UpsertSetting(ctx, key, setting.value, setting.valueType, "ai", setting.description, setting.isSensitive); err != nil {
+		if err := a.Store.UpsertSetting(ctx, key, setting.value, setting.valueType, "ai", setting.description, setting.isSensitive); err != nil {
 			a.Logger.Warn("failed to seed AI setting", "key", key, "error", err)
 		} else {
 			a.Logger.Debug("seeded AI setting", "key", key)
@@ -469,7 +470,7 @@ func (a *App) seedSystemSettings(ctx context.Context) error {
 	}
 
 	for key, setting := range authSettings {
-		if err := a.SQLite.UpsertSetting(ctx, key, setting.value, setting.valueType, "auth", setting.description, false); err != nil {
+		if err := a.Store.UpsertSetting(ctx, key, setting.value, setting.valueType, "auth", setting.description, false); err != nil {
 			a.Logger.Warn("failed to seed auth setting", "key", key, "error", err)
 		} else {
 			a.Logger.Debug("seeded auth setting", "key", key, "value", setting.value)
@@ -477,7 +478,7 @@ func (a *App) seedSystemSettings(ctx context.Context) error {
 	}
 
 	// Seed server settings
-	if err := a.SQLite.UpsertSetting(ctx, "server.frontend_url", a.Config.Server.FrontendURL, "string", "server", "URL of the frontend application for CORS configuration", false); err != nil {
+	if err := a.Store.UpsertSetting(ctx, "server.frontend_url", a.Config.Server.FrontendURL, "string", "server", "URL of the frontend application for CORS configuration", false); err != nil {
 		a.Logger.Warn("failed to seed server.frontend_url", "error", err)
 	} else {
 		a.Logger.Debug("seeded server.frontend_url", "value", a.Config.Server.FrontendURL)
