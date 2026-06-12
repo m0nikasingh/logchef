@@ -1,4 +1,4 @@
-package sqlite
+package postgres
 
 import (
 	"database/sql"
@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/mr-karan/logchef/internal/store"
-	"github.com/mr-karan/logchef/internal/store/sqlite/sqlc"
+	"github.com/mr-karan/logchef/internal/store/postgres/sqlc"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
-// Sentinels are re-exported from internal/store so that errors.Is works
-// regardless of which package callers reference.
+// Sentinels are re-exported from internal/store so callers using errors.Is
+// see the same sentinels regardless of backend.
 var (
 	ErrNotFound         = store.ErrNotFound
 	ErrUserNotFound     = store.ErrUserNotFound
@@ -26,7 +29,7 @@ var (
 	ErrSourceExists     = store.ErrSourceExists
 )
 
-// IsNotFoundError checks if an error is any type of not found error
+// IsNotFoundError reports whether err is any flavor of not-found.
 func IsNotFoundError(err error) bool {
 	return errors.Is(err, ErrNotFound) ||
 		errors.Is(err, sql.ErrNoRows) ||
@@ -35,35 +38,27 @@ func IsNotFoundError(err error) bool {
 		errors.Is(err, models.ErrTeamNotFound)
 }
 
-// IsUserNotFoundError checks if an error is specifically a user not found error
+// IsUserNotFoundError reports whether err is specifically a user-not-found.
 func IsUserNotFoundError(err error) bool {
 	return errors.Is(err, ErrUserNotFound) ||
 		(errors.Is(err, ErrNotFound) && strings.Contains(err.Error(), "user"))
 }
 
-// IsTeamNotFoundError checks if an error is specifically a team not found error
+// IsTeamNotFoundError reports whether err is specifically a team-not-found.
 func IsTeamNotFoundError(err error) bool {
 	return errors.Is(err, ErrTeamNotFound) ||
 		(errors.Is(err, ErrNotFound) && strings.Contains(err.Error(), "team"))
 }
 
-// IsSourceNotFoundError checks if an error is specifically a source not found error
+// IsSourceNotFoundError reports whether err is specifically a source-not-found.
 func IsSourceNotFoundError(err error) bool {
 	return errors.Is(err, ErrSourceNotFound) ||
 		(errors.Is(err, ErrNotFound) && strings.Contains(err.Error(), "source"))
 }
 
-// IsUniqueConstraintError checks if an error is a unique constraint violation
+// IsUniqueConstraintError reports whether err is a unique-constraint violation.
 func IsUniqueConstraintError(err error) bool {
-	return errors.Is(err, ErrUniqueConstraint) || isUniqueConstraintSQLiteError(err, "", "")
-}
-
-// boolToInt converts a bool to int64 for SQLite storage
-func boolToInt(b bool) int64 {
-	if b {
-		return 1
-	}
-	return 0
+	return errors.Is(err, ErrUniqueConstraint) || isUniqueConstraintPostgresError(err)
 }
 
 // nullString wraps a string into sql.NullString, treating empty as NULL.
@@ -71,7 +66,9 @@ func nullString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
 }
 
-// mapSourceRowToModel maps a sqlc.Source to a models.Source
+// mapSourceRowToModel maps a postgres sqlc.Source to a models.Source.
+// Unlike the sqlite mapper, postgres returns native bool/time so no int-to-bool
+// conversion is needed.
 func mapSourceRowToModel(row *sqlc.Source) *models.Source {
 	if row == nil {
 		return nil
@@ -79,7 +76,7 @@ func mapSourceRowToModel(row *sqlc.Source) *models.Source {
 	return &models.Source{
 		ID:                models.SourceID(row.ID),
 		Name:              row.Name,
-		MetaIsAutoCreated: row.MetaIsAutoCreated == 1,
+		MetaIsAutoCreated: row.MetaIsAutoCreated,
 		MetaTSField:       row.MetaTsField,
 		MetaSeverityField: row.MetaSeverityField.String,
 		Description:       row.Description.String,
@@ -90,53 +87,27 @@ func mapSourceRowToModel(row *sqlc.Source) *models.Source {
 			Password:  row.Password,
 			Database:  row.Database,
 			TableName: row.TableName,
-			TLSEnable: row.TlsEnable == 1,
+			TLSEnable: row.TlsEnable,
 		},
 		Timestamps: models.Timestamps{
 			CreatedAt: row.CreatedAt,
 			UpdatedAt: row.UpdatedAt,
 		},
-		Managed:   row.Managed == 1,
+		Managed:   row.Managed,
 		SecretRef: row.SecretRef.String,
 	}
 }
 
-// Note: IsConnected and Schema/Columns are populated dynamically, not from DB row.
-
-// isAnyUniqueConstraintError returns true if the error is any SQLite
-// UNIQUE constraint violation, regardless of which table/columns were
-// involved. Used by create paths whose unique constraints span
-// composite columns or partial indexes that the table-specific helper
-// cannot match cheaply.
-func isAnyUniqueConstraintError(err error) bool {
-	if err == nil {
-		return false
+// isUniqueConstraintPostgresError reports whether err is a Postgres 23505 violation.
+func isUniqueConstraintPostgresError(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == pgerrcode.UniqueViolation
 	}
-	return strings.Contains(err.Error(), "UNIQUE constraint failed")
-}
-
-// isUniqueConstraintSQLiteError checks if an error is likely a SQLite UNIQUE constraint violation.
-// It performs a simple string check on the error message.
-func isUniqueConstraintSQLiteError(err error, table, column string) bool {
-	if err == nil {
-		return false
-	}
-
-	errMsg := err.Error()
-
-	// Simple string checks for SQLite constraint errors
-	if strings.Contains(errMsg, "UNIQUE constraint failed") {
-		if table != "" && column != "" {
-			constraint := fmt.Sprintf("%s.%s", table, column)
-			return strings.Contains(errMsg, constraint)
-		}
-		return true
-	}
-
 	return false
 }
 
-// wrapError wraps an error with additional context
+// wrapError wraps an error with additional context (matches sqlite signature).
 func wrapError(err error, format string, args ...interface{}) error {
 	if err == nil {
 		return nil
@@ -144,17 +115,17 @@ func wrapError(err error, format string, args ...interface{}) error {
 	return fmt.Errorf(format+": %w", append(args, err)...)
 }
 
-// handleNotFoundError checks if the error is sql.ErrNoRows and maps it
-// to appropriate application-level not found errors based on the provided resource type.
+// handleNotFoundError maps sql.ErrNoRows into the appropriate domain sentinel
+// based on a free-form prefix. Mirrors the sqlite helper exactly so domain
+// files port without touching call sites.
 func handleNotFoundError(err error, prefix string) error {
 	if err == nil {
 		return nil
 	}
 
 	if errors.Is(err, sql.ErrNoRows) {
-		// Map to specific resource error types
-		// Note: Order matters - check more specific patterns first (e.g., "query" before "team"
-		// since "team query" should match query, not team)
+		// Order matters: more specific patterns first ("query" before "team"
+		// so "team query" matches query, not team).
 		if strings.Contains(prefix, "user") {
 			if strings.Contains(prefix, "email") {
 				return wrapError(ErrUserNotFound, "getting user email %s", strings.TrimPrefix(prefix, "getting user email "))
@@ -173,21 +144,20 @@ func handleNotFoundError(err error, prefix string) error {
 		if strings.Contains(prefix, "session") {
 			return wrapError(ErrSessionNotFound, prefix)
 		}
-		// Generic not found error
 		return wrapError(ErrNotFound, prefix)
 	}
 
-	// For other errors, just wrap them with the prefix
 	return wrapError(err, prefix)
 }
 
-// handleUniqueConstraintError maps SQLite unique constraint errors to specific domain errors
+// handleUniqueConstraintError maps a Postgres unique-violation onto a per-domain
+// sentinel. Mirrors the sqlite signature so domain files port unchanged.
 func handleUniqueConstraintError(err error, table, column, value string) error {
 	if err == nil {
 		return nil
 	}
 
-	if isUniqueConstraintSQLiteError(err, table, column) {
+	if isUniqueConstraintPostgresError(err) {
 		switch {
 		case table == "users" && column == "email":
 			return wrapError(ErrUserExists, "email %s", value)

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
@@ -64,8 +65,18 @@ func IsSourceNotFoundError(err error) bool {
 }
 
 func IsUniqueConstraintError(err error) bool {
-	return errors.Is(err, ErrUniqueConstraint) ||
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrUniqueConstraint) ||
 		errors.Is(err, ErrUserExists) ||
 		errors.Is(err, ErrTeamExists) ||
-		errors.Is(err, ErrSourceExists)
+		errors.Is(err, ErrSourceExists) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return true
+	}
+	return false
 }

@@ -1,4 +1,4 @@
-package sqlite
+package postgres
 
 import (
 	"context"
@@ -6,21 +6,21 @@ import (
 	"fmt"
 
 	"github.com/mr-karan/logchef/internal/store"
-	"github.com/mr-karan/logchef/internal/store/sqlite/sqlc"
+	"github.com/mr-karan/logchef/internal/store/postgres/sqlc"
 	"github.com/mr-karan/logchef/pkg/models"
 )
 
 // CreateCollection inserts a new collection. The caller is automatically
 // added as the owner via AddCollectionMember in core.
 func (db *DB) CreateCollection(ctx context.Context, name, description string, isPersonal bool, createdBy models.UserID) (*models.Collection, error) {
-	row, err := db.writeQueries.CreateCollection(ctx, sqlc.CreateCollectionParams{
+	row, err := db.queries.CreateCollection(ctx, sqlc.CreateCollectionParams{
 		Name:        name,
 		Description: nullString(description),
-		IsPersonal:  boolToInt(isPersonal),
+		IsPersonal:  isPersonal,
 		CreatedBy:   sql.NullInt64{Int64: int64(createdBy), Valid: true},
 	})
 	if err != nil {
-		if isAnyUniqueConstraintError(err) {
+		if isUniqueConstraintPostgresError(err) {
 			return nil, fmt.Errorf("creating collection: %w", store.ErrUniqueConstraint)
 		}
 		db.log.Error("failed to create collection", "error", err, "name", name, "is_personal", isPersonal)
@@ -41,7 +41,7 @@ func (db *DB) CreateCollection(ctx context.Context, name, description string, is
 
 // GetCollection returns a collection by id, or ErrNotFound if missing.
 func (db *DB) GetCollection(ctx context.Context, collectionID int) (*models.Collection, error) {
-	row, err := db.readQueries.GetCollection(ctx, int64(collectionID))
+	row, err := db.queries.GetCollection(ctx, int64(collectionID))
 	if err != nil {
 		return nil, handleNotFoundError(err, fmt.Sprintf("getting collection id %d", collectionID))
 	}
@@ -51,7 +51,7 @@ func (db *DB) GetCollection(ctx context.Context, collectionID int) (*models.Coll
 // GetPersonalCollection returns the user's personal collection, or sql.ErrNoRows
 // if one has not been created yet.
 func (db *DB) GetPersonalCollection(ctx context.Context, userID models.UserID) (*models.Collection, error) {
-	row, err := db.readQueries.GetPersonalCollection(ctx, sql.NullInt64{Int64: int64(userID), Valid: true})
+	row, err := db.queries.GetPersonalCollection(ctx, sql.NullInt64{Int64: int64(userID), Valid: true})
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (db *DB) GetPersonalCollection(ctx context.Context, userID models.UserID) (
 
 // UpdateCollection updates name and description.
 func (db *DB) UpdateCollection(ctx context.Context, collectionID int, name, description string) error {
-	if err := db.writeQueries.UpdateCollection(ctx, sqlc.UpdateCollectionParams{
+	if err := db.queries.UpdateCollection(ctx, sqlc.UpdateCollectionParams{
 		Name:        name,
 		Description: nullString(description),
 		ID:          int64(collectionID),
@@ -73,7 +73,7 @@ func (db *DB) UpdateCollection(ctx context.Context, collectionID int, name, desc
 
 // DeleteCollection removes a collection.
 func (db *DB) DeleteCollection(ctx context.Context, collectionID int) error {
-	if err := db.writeQueries.DeleteCollection(ctx, int64(collectionID)); err != nil {
+	if err := db.queries.DeleteCollection(ctx, int64(collectionID)); err != nil {
 		db.log.Error("failed to delete collection", "error", err, "collection_id", collectionID)
 		return fmt.Errorf("error deleting collection: %w", err)
 	}
@@ -82,7 +82,7 @@ func (db *DB) DeleteCollection(ctx context.Context, collectionID int) error {
 
 // ListCollectionsForUser returns every collection the user owns or is a member of.
 func (db *DB) ListCollectionsForUser(ctx context.Context, userID models.UserID) ([]*models.Collection, error) {
-	rows, err := db.readQueries.ListCollectionsForUser(ctx, int64(userID))
+	rows, err := db.queries.ListCollectionsForUser(ctx, int64(userID))
 	if err != nil {
 		db.log.Error("failed to list collections for user", "error", err, "user_id", userID)
 		return nil, fmt.Errorf("error listing collections: %w", err)
@@ -93,7 +93,7 @@ func (db *DB) ListCollectionsForUser(ctx context.Context, userID models.UserID) 
 			ID:          int(r.ID),
 			Name:        r.Name,
 			Description: r.Description.String,
-			IsPersonal:  r.IsPersonal == 1,
+			IsPersonal:  r.IsPersonal,
 			CallerRole:  models.CollectionRole(r.CallerRole),
 			MemberCount: int(r.MemberCount),
 			ItemCount:   int(r.ItemCount),
@@ -119,7 +119,7 @@ func (db *DB) AddCollectionMember(ctx context.Context, collectionID int, userID 
 	if addedBy != nil {
 		params.AddedBy = sql.NullInt64{Int64: int64(*addedBy), Valid: true}
 	}
-	if err := db.writeQueries.AddCollectionMember(ctx, params); err != nil {
+	if err := db.queries.AddCollectionMember(ctx, params); err != nil {
 		// The SQL itself uses ON CONFLICT DO NOTHING, so re-adding an existing
 		// member is a no-op at the DB level — any error here is unexpected.
 		db.log.Error("failed to add collection member", "error", err, "collection_id", collectionID, "user_id", userID)
@@ -130,7 +130,7 @@ func (db *DB) AddCollectionMember(ctx context.Context, collectionID int, userID 
 
 // GetCollectionMember returns a single membership row, or sql.ErrNoRows if absent.
 func (db *DB) GetCollectionMember(ctx context.Context, collectionID int, userID models.UserID) (*models.CollectionMember, error) {
-	row, err := db.readQueries.GetCollectionMember(ctx, sqlc.GetCollectionMemberParams{
+	row, err := db.queries.GetCollectionMember(ctx, sqlc.GetCollectionMemberParams{
 		CollectionID: int64(collectionID),
 		UserID:       int64(userID),
 	})
@@ -152,7 +152,7 @@ func (db *DB) GetCollectionMember(ctx context.Context, collectionID int, userID 
 
 // ListCollectionMembers returns members of a collection with user details.
 func (db *DB) ListCollectionMembers(ctx context.Context, collectionID int) ([]*models.CollectionMember, error) {
-	rows, err := db.readQueries.ListCollectionMembers(ctx, int64(collectionID))
+	rows, err := db.queries.ListCollectionMembers(ctx, int64(collectionID))
 	if err != nil {
 		return nil, fmt.Errorf("error listing collection members: %w", err)
 	}
@@ -177,7 +177,7 @@ func (db *DB) ListCollectionMembers(ctx context.Context, collectionID int) ([]*m
 
 // RemoveCollectionMember drops a member from a collection.
 func (db *DB) RemoveCollectionMember(ctx context.Context, collectionID int, userID models.UserID) error {
-	if err := db.writeQueries.RemoveCollectionMember(ctx, sqlc.RemoveCollectionMemberParams{
+	if err := db.queries.RemoveCollectionMember(ctx, sqlc.RemoveCollectionMemberParams{
 		CollectionID: int64(collectionID),
 		UserID:       int64(userID),
 	}); err != nil {
@@ -191,12 +191,12 @@ func (db *DB) AddCollectionItem(ctx context.Context, collectionID, savedQueryID,
 	params := sqlc.AddCollectionItemParams{
 		CollectionID: int64(collectionID),
 		SavedQueryID: int64(savedQueryID),
-		SortOrder:    int64(sortOrder),
+		SortOrder:    int32(sortOrder),
 	}
 	if addedBy != nil {
 		params.AddedBy = sql.NullInt64{Int64: int64(*addedBy), Valid: true}
 	}
-	if err := db.writeQueries.AddCollectionItem(ctx, params); err != nil {
+	if err := db.queries.AddCollectionItem(ctx, params); err != nil {
 		// SQL uses ON CONFLICT DO NOTHING, so duplicate inserts are a no-op.
 		return fmt.Errorf("error adding collection item: %w", err)
 	}
@@ -205,7 +205,7 @@ func (db *DB) AddCollectionItem(ctx context.Context, collectionID, savedQueryID,
 
 // RemoveCollectionItem unlinks a saved query from a collection.
 func (db *DB) RemoveCollectionItem(ctx context.Context, collectionID, savedQueryID int) error {
-	if err := db.writeQueries.RemoveCollectionItem(ctx, sqlc.RemoveCollectionItemParams{
+	if err := db.queries.RemoveCollectionItem(ctx, sqlc.RemoveCollectionItemParams{
 		CollectionID: int64(collectionID),
 		SavedQueryID: int64(savedQueryID),
 	}); err != nil {
@@ -218,7 +218,7 @@ func (db *DB) RemoveCollectionItem(ctx context.Context, collectionID, savedQuery
 // Runnable is left at false here — it must be set by the application layer
 // based on the requesting user's source access.
 func (db *DB) ListCollectionItems(ctx context.Context, collectionID int) ([]*models.CollectionItem, error) {
-	rows, err := db.readQueries.ListCollectionItems(ctx, int64(collectionID))
+	rows, err := db.queries.ListCollectionItems(ctx, int64(collectionID))
 	if err != nil {
 		return nil, fmt.Errorf("error listing collection items: %w", err)
 	}
@@ -259,7 +259,7 @@ func mapCollectionRow(row sqlc.Collection) *models.Collection {
 		ID:          int(row.ID),
 		Name:        row.Name,
 		Description: row.Description.String,
-		IsPersonal:  row.IsPersonal == 1,
+		IsPersonal:  row.IsPersonal,
 		CreatedAt:   row.CreatedAt,
 		UpdatedAt:   row.UpdatedAt,
 	}

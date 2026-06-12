@@ -1,0 +1,133 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	pgsqlc "github.com/mr-karan/logchef/internal/store/postgres/sqlc"
+	sqlc "github.com/mr-karan/logchef/internal/store/sqlite/sqlc"
+	"github.com/mr-karan/logchef/pkg/models"
+)
+
+// The Store interface still references sqlite-internal sqlc types for API
+// tokens; until that interface leak is resolved (see T22 concern notes),
+// this file accepts/returns sqlite/sqlc types and translates field-by-field
+// to/from the structurally identical postgres/sqlc types at the boundary.
+
+// API Token methods
+
+// CreateAPIToken inserts a new API token record into the database.
+func (db *DB) CreateAPIToken(ctx context.Context, params sqlc.CreateAPITokenParams) (int64, error) {
+	pgParams := pgsqlc.CreateAPITokenParams{
+		UserID:    params.UserID,
+		Name:      params.Name,
+		TokenHash: params.TokenHash,
+		Prefix:    params.Prefix,
+		ExpiresAt: params.ExpiresAt,
+		Scopes:    params.Scopes,
+	}
+	id, err := db.queries.CreateAPIToken(ctx, pgParams)
+	if err != nil {
+		db.log.Error("failed to create API token record in db", "error", err, "user_id", params.UserID)
+		return 0, fmt.Errorf("failed to create API token: %w", err)
+	}
+
+	return id, nil
+}
+
+// GetAPIToken retrieves an API token by ID.
+func (db *DB) GetAPIToken(ctx context.Context, id int64) (sqlc.ApiToken, error) {
+	token, err := db.queries.GetAPIToken(ctx, id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return sqlc.ApiToken{}, models.ErrNotFound
+		}
+		db.log.Error("failed to get API token from db", "error", err, "token_id", id)
+		return sqlc.ApiToken{}, fmt.Errorf("failed to get API token: %w", err)
+	}
+
+	return apiTokenFromPG(token), nil
+}
+
+// GetAPITokenByHash retrieves an API token by its hash (for authentication).
+func (db *DB) GetAPITokenByHash(ctx context.Context, tokenHash string) (sqlc.ApiToken, error) {
+	apiToken, err := db.queries.GetAPITokenByHash(ctx, tokenHash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return sqlc.ApiToken{}, models.ErrNotFound
+		}
+		db.log.Error("failed to get API token by hash from db", "error", err)
+		return sqlc.ApiToken{}, fmt.Errorf("failed to get API token by hash: %w", err)
+	}
+
+	return apiTokenFromPG(apiToken), nil
+}
+
+// ListAPITokensForUser retrieves all API tokens for a specific user.
+func (db *DB) ListAPITokensForUser(ctx context.Context, userID int64) ([]sqlc.ApiToken, error) {
+	tokens, err := db.queries.ListAPITokensForUser(ctx, userID)
+	if err != nil {
+		db.log.Error("failed to list API tokens for user from db", "error", err, "user_id", userID)
+		return nil, fmt.Errorf("failed to list API tokens for user: %w", err)
+	}
+
+	out := make([]sqlc.ApiToken, 0, len(tokens))
+	for _, t := range tokens {
+		out = append(out, apiTokenFromPG(t))
+	}
+	return out, nil
+}
+
+// UpdateAPITokenLastUsed updates the last used timestamp for an API token.
+func (db *DB) UpdateAPITokenLastUsed(ctx context.Context, id int64) error {
+	err := db.queries.UpdateAPITokenLastUsed(ctx, id)
+	if err != nil {
+		db.log.Error("failed to update API token last used timestamp", "error", err, "token_id", id)
+		return fmt.Errorf("failed to update API token last used: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteAPIToken deletes an API token by ID and user ID (ensures user owns the token).
+func (db *DB) DeleteAPIToken(ctx context.Context, params sqlc.DeleteAPITokenParams) error {
+	err := db.queries.DeleteAPIToken(ctx, pgsqlc.DeleteAPITokenParams{
+		ID:     params.ID,
+		UserID: params.UserID,
+	})
+	if err != nil {
+		db.log.Error("failed to delete API token from db", "error", err, "token_id", params.ID, "user_id", params.UserID)
+		return fmt.Errorf("failed to delete API token: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteExpiredAPITokens removes all expired API tokens.
+func (db *DB) DeleteExpiredAPITokens(ctx context.Context) error {
+	err := db.queries.DeleteExpiredAPITokens(ctx)
+	if err != nil {
+		db.log.Error("failed to delete expired API tokens from db", "error", err)
+		return fmt.Errorf("failed to delete expired API tokens: %w", err)
+	}
+
+	return nil
+}
+
+// apiTokenFromPG copies postgres-sqlc ApiToken into the sqlite-sqlc type used
+// by the Store interface.
+func apiTokenFromPG(t pgsqlc.ApiToken) sqlc.ApiToken {
+	return sqlc.ApiToken{
+		ID:         t.ID,
+		UserID:     t.UserID,
+		Name:       t.Name,
+		TokenHash:  t.TokenHash,
+		Prefix:     t.Prefix,
+		LastUsedAt: t.LastUsedAt,
+		ExpiresAt:  t.ExpiresAt,
+		CreatedAt:  t.CreatedAt,
+		UpdatedAt:  t.UpdatedAt,
+		Scopes:     t.Scopes,
+	}
+}
