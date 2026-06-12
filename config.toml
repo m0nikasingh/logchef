@@ -23,11 +23,27 @@ secure_cookie = false
 # For first boot with a separate frontend origin, set LOGCHEF_SERVER__FRONTEND_URL.
 
 # -----------------------------------------------------------------------------
-# SQLite (required)
+# Database backend selection
 # -----------------------------------------------------------------------------
+# Choose which SQL backend logchef should use for application state
+# (users, teams, sources, sessions, alerts, saved queries, etc.).
+#
+# Override at boot with: LOGCHEF_DATABASE__DRIVER=postgres
+[database]
+driver = "sqlite"   # "sqlite" (default) | "postgres"
+
+# Used when database.driver = "sqlite" (default).
 [sqlite]
 # Path to the SQLite database file (relative to the working directory).
 path = "local.db"
+
+# Used when database.driver = "postgres".
+# Override DSN at boot with: LOGCHEF_POSTGRES__DSN=...
+[postgres]
+dsn = "postgres://logchef:logchef@localhost:5432/logchef?sslmode=require"
+max_open_conns    = 25
+max_idle_conns    = 5
+conn_max_lifetime = "1h"
 
 # -----------------------------------------------------------------------------
 # OpenID Connect (OIDC) (required)

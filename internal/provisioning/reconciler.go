@@ -45,7 +45,12 @@ func Reconcile(ctx context.Context, cfg *config.ProvisioningConfig, db store.Sto
 	defer tx.Rollback()
 
 	// TODO(phase3): remove downcast once WriteQueriesWithTx is part of the Store interface or refactored away.
-	qtx := db.(*sqlite.DB).WriteQueriesWithTx(tx)
+	// Tracked at upstream issue follow-up.
+	sqliteDB, ok := db.(*sqlite.DB)
+	if !ok {
+		return fmt.Errorf("provisioning currently requires the sqlite backend; postgres support tracked at mr-karan/logchef#95 follow-up. Disable provisioning (provisioning.enabled = false) when running database.driver = \"postgres\".")
+	}
+	qtx := sqliteDB.WriteQueriesWithTx(tx)
 
 	// Track sources created/updated for post-commit ClickHouse connection setup
 	var sourcesToConnect []models.Source

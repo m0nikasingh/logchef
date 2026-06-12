@@ -16,7 +16,9 @@ import (
 // Config represents the application configuration
 type Config struct {
 	Server       ServerConfig       `koanf:"server"`
+	Database     DatabaseConfig     `koanf:"database"`
 	SQLite       SQLiteConfig       `koanf:"sqlite"`
+	Postgres     PostgresConfig     `koanf:"postgres"`
 	Clickhouse   ClickhouseConfig   `koanf:"clickhouse"`
 	OIDC         OIDCConfig         `koanf:"oidc"`
 	Auth         AuthConfig         `koanf:"auth"`
@@ -85,9 +87,23 @@ func (s *ServerConfig) IsSecureCookie() bool {
 	return *s.SecureCookie
 }
 
+// DatabaseConfig selects which SQL backend to use. SQLite is the default
+// to keep the single-binary easy-start experience.
+type DatabaseConfig struct {
+	Driver string `koanf:"driver"` // "sqlite" (default) | "postgres"
+}
+
 // SQLiteConfig contains SQLite database settings
 type SQLiteConfig struct {
 	Path string `koanf:"path"`
+}
+
+// PostgresConfig is used when Database.Driver == "postgres".
+type PostgresConfig struct {
+	DSN             string        `koanf:"dsn"`
+	MaxOpenConns    int           `koanf:"max_open_conns"`
+	MaxIdleConns    int           `koanf:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `koanf:"conn_max_lifetime"`
 }
 
 // ClickhouseConfig contains Clickhouse database settings
@@ -171,6 +187,14 @@ const (
 	defaultServerSecureCookie = true
 	defaultSQLitePath         = "local.db"
 	defaultLoggingLevel       = "info"
+
+	databaseDriverSQLite   = "sqlite"
+	databaseDriverPostgres = "postgres"
+
+	defaultDatabaseDriver       = databaseDriverSQLite
+	defaultPostgresMaxOpenConns = 25
+	defaultPostgresMaxIdleConns = 5
+	defaultPostgresConnMaxLife  = time.Hour
 
 	defaultAlertsEnabled            = true
 	defaultAlertsEvaluationInterval = time.Minute
@@ -266,6 +290,21 @@ func Load(path string) (*Config, error) {
 		cfg.Provisioning.File = provPath
 	}
 
+	// Validate database driver selection.
+	switch cfg.Database.Driver {
+	case databaseDriverSQLite, "":
+		// SQLite path validation already happens below; nothing to do.
+	case databaseDriverPostgres:
+		if strings.TrimSpace(cfg.Postgres.DSN) == "" {
+			return nil, fmt.Errorf("config: database.driver=postgres requires postgres.dsn")
+		}
+		if cfg.Provisioning.Enabled() {
+			return nil, fmt.Errorf("config: database.driver=postgres is not yet compatible with provisioning; either disable provisioning or use database.driver=sqlite")
+		}
+	default:
+		return nil, fmt.Errorf("config: unknown database.driver %q (want sqlite or postgres)", cfg.Database.Driver)
+	}
+
 	// Validate required configurations
 	if len(cfg.Auth.AdminEmails) == 0 {
 		return nil, fmt.Errorf("admin_emails is required in auth configuration (either in file or %sAUTH__ADMIN_EMAILS)", envPrefix)
@@ -313,8 +352,22 @@ func applyDefaults(k *koanf.Koanf, cfg *Config) {
 		defaultVal := defaultServerSecureCookie
 		cfg.Server.SecureCookie = &defaultVal
 	}
+	if !k.Exists("database.driver") {
+		cfg.Database.Driver = defaultDatabaseDriver
+	}
 	if !k.Exists("sqlite.path") {
 		cfg.SQLite.Path = defaultSQLitePath
+	}
+	if cfg.Database.Driver == databaseDriverPostgres {
+		if !k.Exists("postgres.max_open_conns") {
+			cfg.Postgres.MaxOpenConns = defaultPostgresMaxOpenConns
+		}
+		if !k.Exists("postgres.max_idle_conns") {
+			cfg.Postgres.MaxIdleConns = defaultPostgresMaxIdleConns
+		}
+		if !k.Exists("postgres.conn_max_lifetime") {
+			cfg.Postgres.ConnMaxLifetime = defaultPostgresConnMaxLife
+		}
 	}
 	if !k.Exists("logging.level") {
 		cfg.Logging.Level = defaultLoggingLevel

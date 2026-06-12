@@ -16,6 +16,7 @@ import (
 	"github.com/mr-karan/logchef/internal/provisioning"
 	"github.com/mr-karan/logchef/internal/server"
 	"github.com/mr-karan/logchef/internal/store"
+	"github.com/mr-karan/logchef/internal/store/postgres"
 	"github.com/mr-karan/logchef/internal/store/sqlite"
 	"github.com/mr-karan/logchef/pkg/logger"
 )
@@ -64,14 +65,30 @@ func New(opts Options) (*App, error) {
 func (a *App) Initialize(ctx context.Context) error {
 	var err error
 
-	// Initialize SQLite database.
-	sqliteOpts := sqlite.Options{
-		Config: a.Config.SQLite,
-		Logger: a.Logger,
-	}
-	a.Store, err = sqlite.New(sqliteOpts)
-	if err != nil {
-		return fmt.Errorf("failed to initialize sqlite: %w", err)
+	// Initialize the application state store (sqlite or postgres).
+	switch a.Config.Database.Driver {
+	case "", "sqlite":
+		sqliteOpts := sqlite.Options{Config: a.Config.SQLite, Logger: a.Logger}
+		a.Store, err = sqlite.New(sqliteOpts)
+		if err != nil {
+			return fmt.Errorf("failed to initialize sqlite store: %w", err)
+		}
+	case "postgres":
+		pgOpts := postgres.Options{
+			Logger: a.Logger,
+			Config: postgres.Config{
+				DSN:             a.Config.Postgres.DSN,
+				MaxOpenConns:    a.Config.Postgres.MaxOpenConns,
+				MaxIdleConns:    a.Config.Postgres.MaxIdleConns,
+				ConnMaxLifetime: a.Config.Postgres.ConnMaxLifetime,
+			},
+		}
+		a.Store, err = postgres.New(pgOpts)
+		if err != nil {
+			return fmt.Errorf("failed to initialize postgres store: %w", err)
+		}
+	default:
+		return fmt.Errorf("unknown database.driver %q", a.Config.Database.Driver)
 	}
 
 	// Initialize admin users based on configuration.
