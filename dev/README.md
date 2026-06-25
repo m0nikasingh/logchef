@@ -106,3 +106,22 @@ just dev-init-tables
 **Vector can't connect?**
 - Ensure ClickHouse is healthy: `curl http://localhost:8123/ping`
 - Check table exists: `curl "http://localhost:8123/?query=SHOW+TABLES"`
+
+## Postgres backend (multi-replica ready)
+
+The default stack uses SQLite. To try the Postgres backend locally, bring up the
+sibling compose file alongside the default one (it adds a `postgres:15` sidecar):
+
+```bash
+docker compose -f dev/docker-compose.yml -f dev/docker-compose.postgres.yml up -d
+```
+
+Then run logchef on the host pointed at Postgres:
+
+```bash
+LOGCHEF_DATABASE__DRIVER=postgres \
+  LOGCHEF_POSTGRES__DSN="postgres://logchef:logchef@localhost:5432/logchef?sslmode=disable" \
+  just run-backend
+```
+
+ClickHouse, Dex, and the rest of the dev infra are shared with the default stack.

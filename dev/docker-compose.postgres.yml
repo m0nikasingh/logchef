@@ -1,0 +1,30 @@
+# Sibling stack to dev/docker-compose.yml that adds a Postgres sidecar so
+# logchef can be run locally against the Postgres backend.
+#
+# Note: dev/docker-compose.yml only runs infrastructure (ClickHouse, Dex,
+# webhook-receiver, mailpit); logchef itself runs on the host via
+# `just run-backend`. There is no logchef container to `extends:` from,
+# so this file only adds Postgres. Bring up both stacks together, then
+# point the host-run logchef at Postgres via env vars. Usage:
+#
+#   docker compose -f dev/docker-compose.yml -f dev/docker-compose.postgres.yml up -d
+#   LOGCHEF_DATABASE__DRIVER=postgres \
+#     LOGCHEF_POSTGRES__DSN="postgres://logchef:logchef@localhost:5432/logchef?sslmode=disable" \
+#     just run-backend
+
+services:
+  postgres:
+    image: postgres:15
+    hostname: postgres
+    restart: on-failure
+    environment:
+      POSTGRES_USER: logchef
+      POSTGRES_PASSWORD: logchef
+      POSTGRES_DB: logchef
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U logchef -d logchef"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
